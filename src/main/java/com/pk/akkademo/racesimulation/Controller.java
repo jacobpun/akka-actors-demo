@@ -28,10 +28,20 @@ public class Controller extends AbstractBehavior <Controller.Command>{
         private ActorRef<Racer.Command> racer;
     }
 
+    @AllArgsConstructor
+    @Getter
+    public static class RacerFinishedCommand implements Command {
+        private ActorRef<Racer.Command> racer;
+    }
+
     private static class TimerCommand implements Command {}
 
     private static final int RACE_LENGTH = 1000;
     private static final String TIMER_KEY = "TIMER_KEY";
+    private static final int RACERS_COUNT = 5;
+    private Map<ActorRef<Racer.Command>, Integer> currentPositions;
+    private Map<ActorRef<Racer.Command>, Long> finishTimes;
+
 
     private Controller(ActorContext<Command> context) {
         super(context);
@@ -49,8 +59,10 @@ public class Controller extends AbstractBehavior <Controller.Command>{
     private Receive<Command> yetToStart() {
         return newReceiveBuilder()
                 .onMessage(StartCommand.class, command -> {
-                    IntStream.rangeClosed(1, 2).forEach(i -> {
+                    IntStream.rangeClosed(1, RACERS_COUNT).forEach(i -> {
                         ActorRef<Racer.Command> racer = getContext().spawn(Racer.create(), "Racer-" + i);
+                        this.currentPositions = new HashMap<>();
+                        this.finishTimes = new HashMap<>();
                         racer.tell(new Racer.StartCommand(RACE_LENGTH, getContext().getSelf()));
                     });
                     return Behaviors.withTimers(timer -> {
@@ -66,41 +78,21 @@ public class Controller extends AbstractBehavior <Controller.Command>{
     }
 
     public Receive<Command> raceInProgress() {
-        Map<ActorRef<Racer.Command>, Integer> progress = new HashMap<>();
         return newReceiveBuilder()
                 .onMessage(RacerProgressCommand.class, command -> {
-                    progress.put(command.racer, command.progress);
+                    this.currentPositions.put(command.racer, command.progress);
+                    printRacersProgress(this.currentPositions);
                     return Behaviors.same();
+                })
+                .onMessage(RacerFinishedCommand.class, command -> {
+                    this.finishTimes.put(command.racer, System.currentTimeMillis());
+                    return this.finishTimes.size() == RACERS_COUNT? complete(): Behaviors.same();
                 })
                 .onMessage(TimerCommand.class, command -> {
-                    printRacersProgress(progress);
-                    boolean raceFinished = progress.entrySet()
-                            .stream()
-                            .allMatch(entry -> entry.getValue() == RACE_LENGTH);
-
-                    if (raceFinished) {
-                        return complete();
-                    }
-
-                    progress.entrySet()
-                    .stream()
-                    .filter(entry -> entry.getValue() < RACE_LENGTH)
-                    .forEach(entry -> {
-                        entry.getKey().tell(new Racer.ProgressRequestCommand(getContext().getSelf()));
-                    });
+                    this.currentPositions.forEach((racer, pos) -> racer.tell(new Racer.ProgressRequestCommand(getContext().getSelf())));
                     return Behaviors.same();
-                    
                 })
                 .build();
-    }
-
-    private void printRacersProgress(Map<ActorRef<Racer.Command>, Integer> progress) {
-        progress.entrySet()
-            .stream()
-            .forEach(entry -> {
-                System.out.println(entry.getKey().path() + ": " + entry.getValue());
-            });
-        System.out.println("\r\n\r\n-----------------------------------------------------------\r\n\r\n");
     }
 
     private Receive<Command> complete() {
@@ -112,5 +104,12 @@ public class Controller extends AbstractBehavior <Controller.Command>{
                     })
                 )
                 .build();
+    }
+
+    private void printRacersProgress(Map<ActorRef<Racer.Command>, Integer> currentPositions) {
+        currentPositions.forEach((racer, position) -> {
+                System.out.println(racer.path() + ": " + position);
+            });
+        System.out.println("\r\n\r\n-----------------------------------------------------------\r\n\r\n");
     }
 }

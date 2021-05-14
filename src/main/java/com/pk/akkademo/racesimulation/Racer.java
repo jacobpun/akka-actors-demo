@@ -28,10 +28,6 @@ public class Racer extends AbstractBehavior<Racer.Command> {
         private ActorRef<Controller.Command> controller;
     }
 
-    private int progress;
-    private long lastStatusTimeMillis;
-    private double speedPerSecond;
-
     private Racer(ActorContext<Command> context) {
         super(context);
     }
@@ -49,11 +45,8 @@ public class Racer extends AbstractBehavior<Racer.Command> {
     private Receive<Command> yetToStart() {
         return this.newReceiveBuilder()
                     .onMessage(StartCommand.class, command -> {
-                        this.progress = 0;
-                        this.lastStatusTimeMillis = System.currentTimeMillis();
-                        this.speedPerSecond = Math.random();
-                        command.getController().tell(new Controller.RacerProgressCommand(this.progress, getContext().getSelf()));                        
-                        return running(command.raceLength);
+                        command.getController().tell(new Controller.RacerProgressCommand(0, getContext().getSelf()));                        
+                        return running(command.raceLength, 0, System.currentTimeMillis());
                     })
                     .onMessage(ProgressRequestCommand.class, command -> {
                         command.getController().tell(new Controller.RacerProgressCommand(0, getContext().getSelf()));
@@ -62,18 +55,19 @@ public class Racer extends AbstractBehavior<Racer.Command> {
                     .build();
     }
 
-    private Receive<Command> running(int raceLength) {
+    private Receive<Command> running(int raceLength, int progress, long lastStatusTimeMillis) {
+        double speedPerSecond = Math.random();
         return this.newReceiveBuilder()
             .onMessage(ProgressRequestCommand.class, command -> {
+                int newProgress = progress;
                 long currentTime = System.currentTimeMillis();
-                long elapsedTime = currentTime - this.lastStatusTimeMillis;
-                this.progress = (int) (this.progress + (elapsedTime * this.speedPerSecond));
-                if (this.progress > raceLength) {
-                    this.progress = raceLength;
+                long elapsedTime = currentTime - lastStatusTimeMillis;
+                newProgress = (int) (newProgress + (elapsedTime * speedPerSecond));
+                if (newProgress > raceLength) {
+                    newProgress = raceLength;
                 }
-                this.lastStatusTimeMillis = currentTime;
-                command.getController().tell(new Controller.RacerProgressCommand(this.progress, getContext().getSelf()));
-                return this.progress == raceLength? complete(raceLength): Behaviors.same();
+                command.getController().tell(new Controller.RacerProgressCommand(newProgress, getContext().getSelf()));
+                return newProgress == raceLength? complete(raceLength): running(raceLength, newProgress, currentTime);
             })
             .build();
     }
@@ -82,7 +76,8 @@ public class Racer extends AbstractBehavior<Racer.Command> {
         return this.newReceiveBuilder()
             .onMessage(ProgressRequestCommand.class, command -> {
                 command.getController().tell(new Controller.RacerProgressCommand(raceLength, getContext().getSelf()));
-                return Behaviors.same();
+                command.getController().tell(new Controller.RacerFinishedCommand(getContext().getSelf()));
+                return Behaviors.ignore();
             })
             .build();
     }
