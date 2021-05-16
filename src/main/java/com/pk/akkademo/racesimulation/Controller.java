@@ -14,7 +14,9 @@ import akka.actor.typed.javadsl.Behaviors;
 import akka.actor.typed.javadsl.Receive;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 public class Controller extends AbstractBehavior <Controller.Command>{
     
     public static interface Command extends Serializable {}
@@ -40,7 +42,7 @@ public class Controller extends AbstractBehavior <Controller.Command>{
     private static final String TIMER_KEY = "TIMER_KEY";
     private static final int RACERS_COUNT = 5;
     private Map<ActorRef<Racer.Command>, Integer> currentPositions;
-    private Map<ActorRef<Racer.Command>, Long> finishTimes;
+    private Map<ActorRef<Racer.Command>, Long> timeTakenByRacer;
 
 
     private Controller(ActorContext<Command> context) {
@@ -62,7 +64,7 @@ public class Controller extends AbstractBehavior <Controller.Command>{
                     IntStream.rangeClosed(1, RACERS_COUNT).forEach(i -> {
                         ActorRef<Racer.Command> racer = getContext().spawn(Racer.create(), "Racer-" + i);
                         this.currentPositions = new HashMap<>();
-                        this.finishTimes = new HashMap<>();
+                        this.timeTakenByRacer = new HashMap<>();
                         racer.tell(new Racer.StartCommand(RACE_LENGTH, getContext().getSelf()));
                     });
                     return Behaviors.withTimers(timer -> {
@@ -71,13 +73,13 @@ public class Controller extends AbstractBehavior <Controller.Command>{
                             new TimerCommand(), 
                             Duration.ofSeconds(1)
                         );
-                        return raceInProgress();
+                        return raceInProgress(System.currentTimeMillis());
                     });
                 })
                 .build();
     }
 
-    public Receive<Command> raceInProgress() {
+    public Receive<Command> raceInProgress(long raceStartTime) {
         return newReceiveBuilder()
                 .onMessage(RacerProgressCommand.class, command -> {
                     this.currentPositions.put(command.racer, command.progress);
@@ -85,31 +87,41 @@ public class Controller extends AbstractBehavior <Controller.Command>{
                     return Behaviors.same();
                 })
                 .onMessage(RacerFinishedCommand.class, command -> {
-                    this.finishTimes.put(command.racer, System.currentTimeMillis());
-                    return this.finishTimes.size() == RACERS_COUNT? complete(): Behaviors.same();
+                    this.timeTakenByRacer.put(command.racer, System.currentTimeMillis() - raceStartTime);
+                    return this.timeTakenByRacer.size() == RACERS_COUNT? completeRace(): Behaviors.same();
                 })
                 .onMessage(TimerCommand.class, command -> {
-                    this.currentPositions.forEach((racer, pos) -> racer.tell(new Racer.ProgressRequestCommand(getContext().getSelf())));
+                    this.currentPositions.keySet().forEach(racer -> racer.tell(new Racer.ProgressRequestCommand(getContext().getSelf())));
                     return Behaviors.same();
                 })
                 .build();
     }
 
-    private Receive<Command> complete() {
+    private Receive<Command> completeRace() {
         return newReceiveBuilder()
-                .onMessage(TimerCommand.class, command -> 
-                    Behaviors.withTimers(timer -> {
-                        timer.cancel(TIMER_KEY);
-                        return Behaviors.same();
-                    })
-                )
+                .onMessage(TimerCommand.class, command -> {
+                    return Behaviors.withTimers(timers -> {
+                        timers.cancelAll();
+                        this.currentPositions.keySet().forEach(getContext()::stop);
+                        this.displayResult();
+                        return Behaviors.stopped();
+                    });
+                })
                 .build();
     }
 
     private void printRacersProgress(Map<ActorRef<Racer.Command>, Integer> currentPositions) {
         currentPositions.forEach((racer, position) -> {
-                System.out.println(racer.path() + ": " + position);
+                log.info(racer.path() + ": " + position);
             });
-        System.out.println("\r\n\r\n-----------------------------------------------------------\r\n\r\n");
+        log.info("\r\n\r\n-----------------------------------------------------------\r\n\r\n");
+    }
+    
+    private void displayResult() {
+        log.info("FINAL RESULT: ");
+        this.timeTakenByRacer.forEach((racer, time) -> {
+                log.info(racer.path() + ": " + time);
+            });
+        log.info("\r\n\r\n-----------------------------------------------------------\r\n\r\n");
     }
 }
