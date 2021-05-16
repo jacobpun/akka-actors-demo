@@ -14,9 +14,7 @@ import akka.actor.typed.javadsl.Behaviors;
 import akka.actor.typed.javadsl.Receive;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
-import lombok.extern.slf4j.Slf4j;
 
-@Slf4j
 public class Controller extends AbstractBehavior <Controller.Command>{
     
     public static interface Command extends Serializable {}
@@ -83,7 +81,7 @@ public class Controller extends AbstractBehavior <Controller.Command>{
         return newReceiveBuilder()
                 .onMessage(RacerProgressCommand.class, command -> {
                     this.currentPositions.put(command.racer, command.progress);
-                    printRacersProgress(this.currentPositions);
+                    this.logRacersProgress(this.currentPositions);
                     return Behaviors.same();
                 })
                 .onMessage(RacerFinishedCommand.class, command -> {
@@ -103,25 +101,25 @@ public class Controller extends AbstractBehavior <Controller.Command>{
                     return Behaviors.withTimers(timers -> {
                         timers.cancelAll();
                         this.currentPositions.keySet().forEach(getContext()::stop);
-                        this.displayResult();
+                        this.logResult();
                         return Behaviors.stopped();
                     });
                 })
                 .build();
     }
 
-    private void printRacersProgress(Map<ActorRef<Racer.Command>, Integer> currentPositions) {
+    private void logRacersProgress(Map<ActorRef<Racer.Command>, Integer> currentPositions) {
         currentPositions.forEach((racer, position) -> {
-                log.info(racer.path() + ": " + position);
+                getContext().getLog().info("{}: {}", racer.path(), position);
             });
-        log.info("\r\n\r\n-----------------------------------------------------------\r\n\r\n");
+        getContext().getLog().info("-----------------------------------------------------------\r\n\r\n");
     }
     
-    private void displayResult() {
-        log.info("FINAL RESULT: ");
+    private void logResult() {
+        getContext().getLog().info("FINAL RESULT: ");
         this.timeTakenByRacer.forEach((racer, time) -> {
-                log.info(racer.path() + ": " + time);
+                getContext().getLog().info("{}: {} milliseconds", racer.path(), time);
             });
-        log.info("\r\n\r\n-----------------------------------------------------------\r\n\r\n");
+        getContext().getLog().info("-----------------------------------------------------------\r\n\r\n");
     }
 }
